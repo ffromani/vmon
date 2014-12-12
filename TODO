@@ -1,0 +1,8 @@
+no particular order
+
+- more unit tests: executor, sampler, vminfo
+- stringify UUID only in presentation layer
+- better logging
+- extract output functions
+- add periodic tasks (-S secs:what.what.what,secs:what.what.what ?)
+- ignore test bins (update .gitignore)
