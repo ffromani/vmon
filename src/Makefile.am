@@ -36,6 +36,8 @@ vmon_SOURCES = \
 	sampler.c \
 	scheduler.c \
 	vminfo.c \
+	vminfo_parse.c \
+	vminfo_print.c \
 	vmon.c \
 	vmon_int.c \
 	$(NULL)
