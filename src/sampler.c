@@ -165,16 +165,14 @@ sampler_parse_request(SampleRequest *sr, const char *text, size_t size)
 }
 
 static int
-write_response(FILE *out, const char *response)
+write_response(FILE *out, const char *response, ssize_t length)
 {
-    ssize_t len = 0;
     ssize_t ret = 0;
 
-    len = strlen(response);
-    ret = write(fileno(out), response, len);
-    if (ret != len) {
+    ret = write(fileno(out), response, length);
+    if (ret != length) {
         g_warning("write_response failure: expected=%zu wrote=%zu",
-                  len, ret);
+                  length, ret);
     }
     return 0; /* always succesfull */
 }
@@ -184,7 +182,7 @@ collect_error(VmonRequest *req, gint error, gboolean timeout)
 {
     char dom_uuid[VIR_UUID_STRING_BUFLEN] = { '\0' };
     char req_uuid[VIR_UUID_STRING_BUFLEN] = { '\0' };
-    char buffer[4096];
+    char buffer[4096]; /* TODO */
 
     uuid_unparse(req->sr.uuid, req_uuid);
     if (req->dom) {
@@ -210,7 +208,7 @@ collect_error(VmonRequest *req, gint error, gboolean timeout)
             "",
             (timeout) ?"yes" :"no");
 
-    write_response(req->ctx->out, buffer);
+    write_response(req->ctx->out, buffer, strlen(buffer));
     return 0;
 }
 
@@ -236,48 +234,87 @@ bulk_sampling_work(gpointer data)
     return 0;
 }
 
+typedef struct VmonResponse VmonResponse;
+struct VmonResponse {
+    FILE *out;
+    char *ptr;
+    size_t len;
+    time_t ts;
+};
+
+static void
+response_init(VmonResponse *res)
+{
+    memset(res, 0, sizeof(*res));
+    res->ts = time(NULL);
+}
+
+static void
+response_begin(VmonResponse *res, uuid_t req_id)
+{
+    char req_uuid[VIR_UUID_STRING_BUFLEN] = { '\0' };
+
+    res->out = open_memstream(&res->ptr, &res->len);
+
+    uuid_unparse(req_id, req_uuid);
+
+    fprintf(res->out,
+            "{"
+            " \"req-id\": \"%s\","
+            " \"timestamp\": %zu,"
+            " \"data\": ",
+            req_uuid,
+            res->ts);
+}
+
+static void
+response_finish(VmonResponse *res, FILE *out)
+{
+    fputs(" }\n", res->out);
+
+    fclose(res->out);
+
+    write_response(out, res->ptr, res->len);
+
+    free(res->ptr);
+}
+
+
 static gint
 collect_success(VmonRequest *req)
 {
     int j = 0;
+    VmonResponse res;
+    response_init(&res);
+
+    if (req->ctx->conf.bulk_response) {
+        response_begin(&res, req->sr.uuid);
+    }
 
     for (j = 0; j < req->records_num; j++) {
         VmInfo vm;
-        char req_uuid[VIR_UUID_STRING_BUFLEN] = { '\0' };
-        FILE *out = NULL;
-        char buffer[4096];
-        time_t ts = 0;
-
-        if (ts == 0) {
-            ts = time(NULL);
-        }
-
-        out = fmemopen(buffer, sizeof(buffer), "wb");
-
-        uuid_unparse(req->sr.uuid, req_uuid);
         vminfo_init(&vm);
 
-        vminfo_parse(&vm, req->records[j]); /* FIXME */
-        fprintf(out,
-                "{"
-                " \"req-id\": \"%s\","
-                " \"timestamp\": %zu,"
-                " \"data\": ",
-                req_uuid,
-                ts);
+        if (!req->ctx->conf.bulk_response) {
+            response_begin(&res, req->sr.uuid);
+        }
 
-        vminfo_print_json(&vm, out);
+        vminfo_parse(&vm, req->records[j]); /* FIXME */
+
+        vminfo_print_json(&vm, res.out);
 
         vminfo_free(&vm);
         
-        fputs(" }\n", out);
-        fflush(out);
-        write_response(req->ctx->out, buffer);
-        fclose(out);
+        if (!req->ctx->conf.bulk_response) {
+            response_finish(&res, req->ctx->out);
+        }
     }
 
     virDomainStatsRecordListFree(req->records);
 
+    if (req->ctx->conf.bulk_response) {
+        response_finish(&res, req->ctx->out);
+    }
     return 0;
 }
 

@@ -73,6 +73,10 @@ config_parse_cmdline(VmonConfig *conf, int argc, char *argv[])
             "bulk-sampling", 'B', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE,
             &conf->bulk_sampling, "Use bulk sampling", NULL
         },
+        {
+            "bulk-response", 'b', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE,
+            &conf->bulk_response, "Build bulk response", NULL
+        },
         { NULL }
     };
 
