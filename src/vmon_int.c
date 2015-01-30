@@ -218,15 +218,14 @@ vmon_setup_io(VmonContext *ctx)
                                         ctx->conf.period * 1000,
                                         poll_libvirt,
                                         ctx);
+    } else {
+        ctx->io = g_io_channel_unix_new(STDIN_FILENO);
+        ctx->io_watch_id = g_io_add_watch(ctx->io,
+                                          G_IO_IN|G_IO_HUP|G_IO_ERR,
+                                          vmon_io_callback,
+                                          ctx);
+        //g_io_channel_unref(ctx->io);
     }
-
-    ctx->io = g_io_channel_unix_new(STDIN_FILENO);
-    ctx->io_watch_id = g_io_add_watch(ctx->io,
-                                      G_IO_IN|G_IO_HUP|G_IO_ERR,
-                                      vmon_io_callback,
-                                      ctx);
-    //g_io_channel_unref(ctx->io);
-
     return;
 }
 
