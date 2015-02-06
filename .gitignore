@@ -7,9 +7,7 @@
 Makefile
 Makefile.in
 
-/build-aux/depcomp
-/build-aux/install-sh
-/build-aux/missing
+/build-aux/
 
 /autom4te.cache/
 
@@ -18,11 +16,14 @@ Makefile.in
 /configure
 /config.status
 
+/contrib/jsmn/.deps/
+
 /tags
 
 /aclocal.m4
 /stamp-h1
 /autoscan.log
+/libtool
 
 /src/.deps/
 /src/vmon
@@ -33,3 +34,4 @@ Makefile.in
 
 /vmon-*/
 
+/tests/.deps/
