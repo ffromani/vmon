@@ -129,7 +129,7 @@ sampler_parse_request(SampleRequest *sr, const char *text, size_t size)
             uuidbuf[UUID_STRING_LEN-1] = '\0';
             uuid_parse(uuidbuf, sr->uuid);
             i += 1;
-        } else if (is_token(text, &tokens[i], "stats") && has_next(i, r)) {
+        } else if (is_token(text, &tokens[i], "get-stats") && has_next(i, r)) {
             int j;
 
             if (tokens[i+1].type != JSMN_ARRAY) {
