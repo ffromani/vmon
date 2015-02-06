@@ -96,6 +96,15 @@ vminfo_print_json(VmInfo *vm, FILE *out)
     return 0;
 }
 
+int
+vminfo_send_events(VmInfo *vm, const VmChecks *checks, FILE *out)
+{
+    UNUSED(vm);
+    UNUSED(checks);
+    UNUSED(out);
+    return 0;
+}
+
 void
 vminfo_free(VmInfo *vm)
 {

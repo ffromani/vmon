@@ -250,14 +250,16 @@ response_init(VmonResponse *res)
 }
 
 static void
+response_open(VmonResponse *res)
+{
+    res->out = open_memstream(&res->ptr, &res->len);
+}
+
+static void
 response_begin(VmonResponse *res, uuid_t req_id)
 {
     char req_uuid[VIR_UUID_STRING_BUFLEN] = { '\0' };
-
-    res->out = open_memstream(&res->ptr, &res->len);
-
     uuid_unparse(req_id, req_uuid);
-
     fprintf(res->out,
             "{"
             " \"req-id\": \"%s\","
@@ -268,17 +270,18 @@ response_begin(VmonResponse *res, uuid_t req_id)
 }
 
 static void
-response_finish(VmonResponse *res, FILE *out)
+response_close(VmonResponse *res, FILE *out)
 {
-    fputs(" }\n", res->out);
-
     fclose(res->out);
-
     write_response(out, res->ptr, res->len);
-
     free(res->ptr);
 }
 
+static void
+response_finish(VmonResponse *res)
+{
+    fputs(" }\n", res->out);
+}
 
 static gint
 collect_success(VmonRequest *req)
@@ -287,34 +290,29 @@ collect_success(VmonRequest *req)
     VmonResponse res;
     response_init(&res);
 
-    if (req->ctx->conf.bulk_response) {
-        response_begin(&res, req->sr.uuid);
-    }
+    VmChecks checks;
+    checks.disk_usage_perc = req->ctx->conf.disk_usage_perc;
 
     for (j = 0; j < req->records_num; j++) {
         VmInfo vm;
         vminfo_init(&vm);
 
-        if (!req->ctx->conf.bulk_response) {
-            response_begin(&res, req->sr.uuid);
-        }
-
         vminfo_parse(&vm, req->records[j]); /* FIXME */
 
-        vminfo_print_json(&vm, res.out);
+        response_open(&res);
+        vminfo_send_events(&vm, &checks, res.out);
+        if (!req->ctx->conf.events_only) {
+            response_begin(&res, req->sr.uuid);
+            vminfo_print_json(&vm, res.out);
+            response_finish(&res);
+        }
+        response_close(&res, req->ctx->out);
 
         vminfo_free(&vm);
-        
-        if (!req->ctx->conf.bulk_response) {
-            response_finish(&res, req->ctx->out);
-        }
     }
 
     virDomainStatsRecordListFree(req->records);
 
-    if (req->ctx->conf.bulk_response) {
-        response_finish(&res, req->ctx->out);
-    }
     return 0;
 }
 

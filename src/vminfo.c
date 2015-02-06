@@ -72,3 +72,59 @@ vminfo_free(VmInfo *vm)
     ifaceinfo_free(&vm->iface);
 }
 
+static void
+vm_send_event_block(const char *type, const BlockStats *stats, FILE *out)
+{
+    fprintf(out,
+            "{\"event\": \"%s\","
+            " \"class\": \"block\","
+            " \"device\": \"%s\","
+            " \"allocation\": %llu,"
+            " \"capacity\": %llu,"
+            " \"physical\": %llu}",
+            type,
+            (stats->xname) ?stats->xname :stats->name,
+            stats->allocation,
+            stats->capacity,
+            stats->physical);
+}
+
+enum {
+    MEGAB = 1024 * 1024, /* 2 ** 20 = 1024 ** 2 = 1 MiB */
+    CHUNK = 1024 * 2
+    /*
+     * yep, pessimistic guess. If VDSM configuration changes
+     * (it ever has?) we're badly screwed
+     */
+};
+
+static int
+vm_check_triggered_usage_threshold(const BlockStats *stats,
+                                   int disk_usage_perc)
+{
+    int triggered = 0;
+    unsigned long long disk_usage_threshold = \
+        (disk_usage_perc * CHUNK * MEGAB) / 100;
+    if ((stats->physical - stats->allocation) < disk_usage_threshold) {
+        triggered = 1;
+    }
+    return triggered;
+}
+
+int
+vminfo_send_events(VmInfo *vm, const VmChecks *checks, FILE *out)
+{
+    int err = 0;
+    size_t i;
+    BlockInfo *block = &(vm->block);
+    const BlockStats *stats = (block->xstats) ?block->xstats :block->stats;
+
+    for (i = 0; i < block->nstats; i++) {
+        if (vm_check_triggered_usage_threshold(stats,
+                                               checks->disk_usage_perc)) {
+            vm_send_event_block("usage-threshold", stats, out);
+        }
+    }
+    return err;
+}
+

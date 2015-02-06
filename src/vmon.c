@@ -74,8 +74,12 @@ config_parse_cmdline(VmonConfig *conf, int argc, char *argv[])
             &conf->bulk_sampling, "Use bulk sampling", NULL
         },
         {
-            "bulk-response", 'b', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE,
-            &conf->bulk_response, "Build bulk response", NULL
+            "disk-usage-monitor", 'U', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_INT,
+            &conf->disk_usage_perc, "Deliver events when disk usage exceeds PERCentage of the physical size", "PERC"
+        },
+        {
+            "events-only", 'E', G_OPTION_FLAG_IN_MAIN, G_OPTION_ARG_NONE,
+            &conf->events_only, "Send in output only events", NULL
         },
         { NULL }
     };
@@ -99,6 +103,11 @@ config_parse_cmdline(VmonConfig *conf, int argc, char *argv[])
 
     if (conf->tasks <= 0) {
       g_print("option 'max-tasks' cannot be negative\n");
+      goto clean;
+    }
+
+    if (conf->disk_usage_perc < 0 || conf->disk_usage_perc > 99) {
+      g_print("option 'disk-usage-monitor' must be in range [0,99]");
       goto clean;
     }
 

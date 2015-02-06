@@ -133,6 +133,11 @@ struct VmInfo {
 };
 
 
+typedef struct VmChecks VmChecks;
+struct VmChecks {
+    int disk_usage_perc;
+};
+
 void
 vminfo_init(VmInfo *vm);
 
@@ -142,7 +147,10 @@ vminfo_parse(VmInfo *vm,
 
 int
 vminfo_print_json(VmInfo *vm, FILE *out);
-        
+
+int
+vminfo_send_events(VmInfo *vm, const VmChecks *checks, FILE *out);
+
 void
 vminfo_free(VmInfo *vm);
 

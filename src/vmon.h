@@ -57,7 +57,8 @@ struct VmonConfig {
     int log_level;
     gchar *log_file;
     int bulk_sampling;
-    int bulk_response;
+    int disk_usage_perc;
+    int events_only;
 };
 
 typedef struct VmonContext VmonContext;
