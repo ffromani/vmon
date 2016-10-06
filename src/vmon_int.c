@@ -37,9 +37,6 @@ vmon_log(const gchar *log_domain,
 void
 vmon_setup_log(VmonContext *ctx)
 {
-    g_log_set_handler ("vmon", G_LOG_LEVEL_MASK | G_LOG_FLAG_FATAL
-                       | G_LOG_FLAG_RECURSION, vmon_log, ctx);
-
     if (ctx->conf.log_file) {
         ctx->log = fopen(ctx->conf.log_file, "at");
         if (!ctx->log) {
@@ -49,6 +46,9 @@ vmon_setup_log(VmonContext *ctx)
     } else {
         ctx->log = stderr;
     }
+
+    g_log_set_handler ("vmon", G_LOG_LEVEL_MASK | G_LOG_FLAG_FATAL
+                       | G_LOG_FLAG_RECURSION, vmon_log, ctx);
 
     g_info("vmon startup");
 }
