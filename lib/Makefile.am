@@ -26,6 +26,8 @@ libvmon_a_CFLAGS = \
 	$(NULL)
 
 libvmon_a_LDFLAGS = \
+	-shared \
+	-avoid-version \
 	$(GLIB2_LIBS) \
 	$(GTHREAD2_LIBS) \
 	$(LIBVIRT_LIBS) \

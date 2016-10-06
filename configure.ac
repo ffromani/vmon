@@ -47,11 +47,14 @@ AC_CHECK_FUNCS([getpagesize memset mkdir rmdir])
 
 PKG_CHECK_MODULES(GLIB2, [glib-2.0])
 PKG_CHECK_MODULES(GTHREAD2, [gthread-2.0])
-PKG_CHECK_MODULES(LIBVIRT, [libvirt-qemu])
+PKG_CHECK_MODULES(LIBVIRT, [libvirt])
+PKG_CHECK_MODULES(LIBVIRTQEMU, [libvirt-qemu])
+PKG_CHECK_MODULES(LIBXML2, [libxml-2.0])
 PKG_CHECK_MODULES(UUID, [uuid])
 
 AC_OUTPUT([Makefile
            vmon.spec
+           collectd/Makefile
            contrib/Makefile
            contrib/jsmn/Makefile
            lib/Makefile

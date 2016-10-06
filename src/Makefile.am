@@ -15,7 +15,7 @@ vmon_CFLAGS = \
 	-I$(top_srcdir)/lib \
 	$(GLIB2_CFLAGS) \
 	$(GTHREAD2_CFLAGS) \
-	$(LIBVIRT_CFLAGS) \
+	$(LIBVIRTQEMU_CFLAGS) \
 	$(UUID_CFLAGS) \
 	$(VMON_CFLAGS) \
 	$(AM_CFLAGS) \
@@ -27,7 +27,7 @@ vmon_LDFLAGS = \
 	$(LIBJSMN_LIBS) \
 	$(GLIB2_LIBS) \
 	$(GTHREAD2_LIBS) \
-	$(LIBVIRT_LIBS) \
+	$(LIBVIRTQEMU_LIBS) \
 	$(UUID_LIBS) \
 	$(AM_LDFLAGS) \
 	$(NULL)

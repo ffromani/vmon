@@ -25,6 +25,8 @@ Makefile.in
 /autoscan.log
 /libtool
 
+/collectd/.deps/
+
 /lib/.deps/
 /lib/libvmon.a
 
