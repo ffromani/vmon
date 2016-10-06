@@ -1,6 +1,6 @@
 /*
- * vmon - Virtual Machine MONitor speedup helper for VDSM
- * Copyright (C) 2014-2015 Red Hat, Inc.
+ * vmon - Virtual Machine MONitor for oVirt (et. al.)
+ * Copyright (C) 2014-2016 Red Hat, Inc.
  * Written by Francesco Romani <fromani@redhat.com>
  *
  * This program is free software; you can redistribute it and/or
