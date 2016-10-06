@@ -23,6 +23,8 @@
 
 #include <unistd.h>
 
+#include "config.h"
+
 #include "sampler.h"
 #include "vmon_int.h"
 
@@ -148,8 +150,8 @@ main(int argc, char *argv[])
 
     vmon_setup_log(&ctx);
 
-    g_message("starting vmon with %i threads and %i tasks",
-              ctx.conf.threads, ctx.conf.tasks);
+    g_message("starting vmon v%s with %i threads and %i tasks",
+              VERSION, ctx.conf.threads, ctx.conf.tasks);
 
     g_message("connecting to libvirt...");
 
