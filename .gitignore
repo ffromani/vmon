@@ -25,6 +25,9 @@ Makefile.in
 /autoscan.log
 /libtool
 
+/lib/.deps/
+/lib/libvmon.a
+
 /src/.deps/
 /src/vmon
 /vmon-*.tar.gz

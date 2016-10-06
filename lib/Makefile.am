@@ -5,26 +5,27 @@
 # (at your option) any later version.  See the files README and
 # LICENSE_GPL_v2 which accompany this distribution.
 
-libexec_PROGRAMS = vmon
-vmondir = .
+noinst_LIBRARIES = libvmon.a
+libvmon_a_SOURCES = \
+	executor.c \
+	ringbuffer.c \
+	scheduler.c \
+	$(NULL)
 
 
-vmon_CFLAGS = \
+libvmondir = .
+
+libvmon_a_CFLAGS = \
 	-DVMON_PRIVATE=static \
 	-I$(top_srcdir)/contrib/jsmn \
-	-I$(top_srcdir)/lib \
 	$(GLIB2_CFLAGS) \
 	$(GTHREAD2_CFLAGS) \
 	$(LIBVIRT_CFLAGS) \
 	$(UUID_CFLAGS) \
-	$(VMON_CFLAGS) \
 	$(AM_CFLAGS) \
 	$(NULL)
 
-vmon_LDFLAGS = \
-	-L$(top_srcdir)/contrib/jsmn -ljsmn \
-	-L$(top_srcdir)/lib -lvmon \
-	$(LIBJSMN_LIBS) \
+libvmon_a_LDFLAGS = \
 	$(GLIB2_LIBS) \
 	$(GTHREAD2_LIBS) \
 	$(LIBVIRT_LIBS) \
@@ -32,19 +33,9 @@ vmon_LDFLAGS = \
 	$(AM_LDFLAGS) \
 	$(NULL)
 
-vmon_SOURCES = \
-	sampler.c \
-	vminfo.c \
-	vminfo_parse.c \
-	vminfo_print.c \
-	vmon.c \
-	vmon_int.c \
-	$(NULL)
-
 noinst_HEADERS = \
-	sampler.h \
-	vminfo.h \
-	vmon.h \
-	vmon_int.h \
+	executor.h \
+	ringbuffer.h \
+	scheduler.h \
+	vmonlib.h \
 	$(NULL)
-

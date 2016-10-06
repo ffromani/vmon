@@ -15,6 +15,7 @@ noinst_bindir = .
 COMMON_CFLAGS = \
 	-DVMON_PRIVATE=extern \
 	-I$(top_srcdir)/contrib/jsmn \
+	-I$(top_srcdir)/lib \
 	-I$(top_srcdir)/src \
 	-I$(top_srcdir)/tests \
 	$(GLIB2_CFLAGS) \
@@ -27,6 +28,7 @@ COMMON_CFLAGS = \
 
 COMMON_LDFLAGS = \
 	-L$(top_srcdir)/contrib/jsmn -ljsmn \
+	-L$(top_srcdir)/lib -lvmon \
 	$(LIBJSMN_LIBS) \
 	$(GLIB2_LIBS) \
 	$(GTHREAD2_LIBS) \
@@ -43,9 +45,6 @@ test_executor_LDFLAGS = \
 	$(COMMON_LDFLAGS) \
 	$(NULL)
 test_executor_SOURCES = \
-	$(top_srcdir)/src/scheduler.c \
-	$(top_srcdir)/src/executor.c \
-	$(top_srcdir)/src/ringbuffer.c \
 	$(top_srcdir)/src/vmon_int.c \
 	threading.c \
 	test_executor.c \
@@ -60,8 +59,6 @@ test_ringbuffer_LDFLAGS = \
 	$(COMMON_LDFLAGS) \
 	$(NULL)
 test_ringbuffer_SOURCES = \
-	$(top_srcdir)/src/ringbuffer.c \
-	$(top_srcdir)/src/scheduler.c \
 	$(top_srcdir)/src/vmon_int.c \
 	test_ringbuffer.c \
 	stubs.c \
@@ -77,7 +74,6 @@ test_sampler_request_LDFLAGS = \
 	$(NULL)
 test_sampler_request_SOURCES = \
 	$(top_srcdir)/src/sampler.c \
-	$(top_srcdir)/src/scheduler.c \
 	$(top_srcdir)/src/vmon_int.c \
 	test_sampler_request.c \
 	stubs.c \

@@ -32,20 +32,14 @@
 #include <glib.h>
 #include <libvirt/libvirt.h>
 
-#include "scheduler.h"
 #include "executor.h"
+#include "vmonlib.h"
 
 
 typedef struct SampleRequest SampleRequest;
 struct SampleRequest {
     uuid_t uuid;
     unsigned int stats;
-};
-
-enum {
-    TIMEOUT = 1 * 1000, /* milliseconds */
-    MAX_THREADS = 5,
-    TASKS_PER_THREAD = 200,
 };
 
 typedef struct VmonConfig VmonConfig;

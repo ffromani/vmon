@@ -22,7 +22,7 @@
 #include <stdlib.h>
 
 #include "scheduler.h"
-#include "vmon_int.h"
+#include "vmonlib.h"
 
 
 struct Scheduler {

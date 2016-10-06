@@ -25,8 +25,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#include "vmon.h"
-#include "vmon_int.h"
+#include "vmonlib.h"
 #include "ringbuffer.h"
 #include "scheduler.h"
 #include "executor.h"
