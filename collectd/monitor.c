@@ -524,6 +524,7 @@ static int server_dispatch(void *payload, void *data)
         fclose(cli->fout);
         cli->done = 1;
     } else {
+        fflush(cli->fout); // TODO
         if (cli->serv->devel_mode) {
             INFO(PLUGIN_NAME " plugin: sent to client=%d", cli->fd);
         }
