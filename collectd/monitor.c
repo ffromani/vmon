@@ -53,8 +53,8 @@
 # define UNIX_PATH_MAX sizeof (((struct sockaddr_un *)0)->sun_path)
 #endif
 
-#define DEFAULT_GROUP_NAME "root"
-#define DEFAULT_SOCKET_PATH "/var/run/collectd-mon.sock"
+#define DEFAULT_SOCKET_GROUP "root"
+#define DEFAULT_SOCKET_PATH "/var/run/collectd-monitor"
 #define DEFAULT_SOCKET_PERMS (S_IRWXU|S_IRWXG)
 #define PLUGIN_NAME "monitor"
 
@@ -64,11 +64,11 @@
 /* valid configuration file keys */
 static const char *config_keys[] =
 {
-	"SocketFile",
-	"SocketGroup",
-	"SocketPerms",
-	"DeleteSocket",
+    "SocketFile",
+    "SocketGroup",
+    "SocketPerms",
     "OutputFormat",
+    "DevelMode",
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
@@ -186,7 +186,7 @@ static int queue_pop_head(queue_t *queue, void *data, size_t len)
         pthread_cond_wait(&queue->empty, &queue->lock);
     }
     queue->waiters--;
-        
+
     item = queue->q.head;
     queue->q.head = queue->q.head->next;
     itempair_fix(&queue->q);
@@ -200,7 +200,7 @@ static int queue_pop_head(queue_t *queue, void *data, size_t len)
     return 0;
 }
 
-/* 
+/*
  * Visitor:
  * !0 => abort
  *  0 => go ahead
@@ -220,7 +220,7 @@ static int queue_foreach(queue_t *queue,
         if (err) {
             break;
         }
-            
+
     }
     pthread_mutex_unlock(&queue->lock);
     return err;
@@ -242,7 +242,7 @@ static int queue_free(queue_t *queue,
         item_t *next = item->next;
         void *payload = ((uint8_t *)(item)) + sizeof(item_t);
         err = visitor(payload, data);
-        
+
         if (!err) {
             free(item);
         } else {
@@ -257,15 +257,16 @@ static int queue_free(queue_t *queue,
     return err;
 }
 
-
+typedef struct server_s server_t;
 typedef struct client_s client_t;
+
 struct client_s {
     FILE *fout;
+    server_t *serv;
     int fd;
     int done;
 };
 
-typedef struct server_s server_t;
 struct server_s {
     const char *pathname;
     const char *groupname;
@@ -274,8 +275,8 @@ struct server_s {
     int looping;
     int inited;
     int opened;
-    int delete_socket;
     int output_format;
+    int devel_mode;
     /* TODO: proper event loop */
     pthread_t listener;
     pthread_t dispatcher;
@@ -295,12 +296,12 @@ static int server_init(server_t *serv)
     }
 
     serv->pathname = DEFAULT_SOCKET_PATH;
-    serv->groupname = DEFAULT_GROUP_NAME;
-    serv->fd = -1;
+    serv->groupname = DEFAULT_SOCKET_GROUP;
     serv->perms = DEFAULT_SOCKET_PERMS;
+    serv->fd = -1;
     serv->looping = 0;
     serv->inited = 1;
-    serv->delete_socket = 0;
+    serv->devel_mode = 0;
     serv->output_format = OUTPUT_FORMAT_TERSE;
     serv->listener = (pthread_t) 0;
     serv->dispatcher = (pthread_t) 0;
@@ -315,117 +316,117 @@ static void *server_dispatcher_body(void *arg);
 
 static int server_abort(server_t *serv, const char *reason)
 {
-	char errbuf[1024];
-	sstrerror(errno, errbuf, sizeof(errbuf));
-	ERROR(PLUGIN_NAME " plugin: %s: %s", reason, errbuf);
-	close(serv->fd);
-	serv->fd = -1;
+    char errbuf[1024];
+    sstrerror(errno, errbuf, sizeof(errbuf));
+    ERROR(PLUGIN_NAME " plugin: %s: %s", reason, errbuf);
+    close(serv->fd);
+    serv->fd = -1;
     // TODO: fix the flags?
-	return -1;
+    return -1;
 }
 
 static int server_start_threads(server_t *serv)
 {
     int err = 0;
-	serv->looping = 1;
+    serv->looping = 1;
 
-	err = plugin_thread_create(&serv->listener, NULL,
-                               server_listener_body, NULL);
-	if (err) {
+    err = plugin_thread_create(&serv->listener, NULL,
+                               server_listener_body, serv);
+    if (err) {
         return server_abort(serv,
                             "plugin_thread_create(listener) failed");
-	}
+    }
 
     err = plugin_thread_create(&serv->dispatcher, NULL,
-                               server_dispatcher_body, NULL);
-	if (err) {
+                               server_dispatcher_body, serv);
+    if (err) {
         return server_abort(serv,
                             "plugin_thread_create(dispatcher) failed");
-	}
+    }
 
-	return err;
+    return err;
 }
 
 static int server_delete_socket(server_t *serv)
 {
-	errno = 0;
-	int err = unlink(serv->pathname);
+    errno = 0;
+    int err = unlink(serv->pathname);
     if ((err != 0) && (errno != ENOENT)) {
-		char errbuf[1024];
-		WARNING(PLUGIN_NAME " plugin: Deleting socket file \"%s\" failed: %s",
-			    serv->pathname,
-			    sstrerror (errno, errbuf, sizeof (errbuf)));
-	} else if (!err) {
-		INFO(PLUGIN_NAME " plugin: deleted socket file \"%s\".",
+        char errbuf[1024];
+        WARNING(PLUGIN_NAME " plugin: Deleting socket file \"%s\" failed: %s",
+                serv->pathname,
+                sstrerror (errno, errbuf, sizeof (errbuf)));
+    } else if (!err) {
+        INFO(PLUGIN_NAME " plugin: deleted socket file \"%s\".",
              serv->pathname);
-	}
+    }
     return err;
 }
 
 static int server_set_socket_group(server_t *serv)
 {
-	struct group *g = NULL;
-	struct group sg;
-	char grbuf[2048];
+    struct group *g = NULL;
+    struct group sg;
+    char grbuf[2048];
     int err = 0;
 
-	err = getgrnam_r(serv->groupname, &sg, grbuf, sizeof (grbuf), &g);
-	if (err) {
-		char errbuf[1024];
-		WARNING (PLUGIN_NAME " plugin: getgrnam_r(%s) failed: %s",
+    err = getgrnam_r(serv->groupname, &sg, grbuf, sizeof (grbuf), &g);
+    if (err) {
+        char errbuf[1024];
+        WARNING (PLUGIN_NAME " plugin: getgrnam_r(%s) failed: %s",
                  serv->groupname,
-				 sstrerror(errno, errbuf, sizeof (errbuf)));
-		return -1;
-	}
-	if (g == NULL) {
-		WARNING(PLUGIN_NAME " plugin: No such group: `%s'",
-				serv->groupname);
-		return -1;
-	}
+                 sstrerror(errno, errbuf, sizeof (errbuf)));
+        return -1;
+    }
+    if (g == NULL) {
+        WARNING(PLUGIN_NAME " plugin: No such group: `%s'",
+                serv->groupname);
+        return -1;
+    }
 
-	if (chown(serv->pathname, (uid_t) -1, g->gr_gid) != 0) {
-		char errbuf[1024];
-		WARNING (PLUGIN_NAME" plugin: chown (%s, -1, %i) failed: %s",
+    if (chown(serv->pathname, (uid_t) -1, g->gr_gid) != 0) {
+        char errbuf[1024];
+        WARNING (PLUGIN_NAME" plugin: chown (%s, -1, %i) failed: %s",
                  serv->pathname,
-				 (int) g->gr_gid,
-				 sstrerror(errno, errbuf, sizeof (errbuf)));
-	}
+                 (int) g->gr_gid,
+                 sstrerror(errno, errbuf, sizeof (errbuf)));
+    }
     return 0;
 }
 
 static int server_open_socket(server_t *serv)
 {
-	struct sockaddr_un sa = { 0 };
-	int err = 0;
+    struct sockaddr_un sa = { 0 };
+    int err = 0;
 
-	serv->fd = socket (PF_UNIX, SOCK_STREAM, 0);
-	if (serv->fd < 0) {
+    serv->fd = socket (PF_UNIX, SOCK_STREAM, 0);
+    if (serv->fd < 0) {
         return server_abort(serv, "socket failed");
-	}
+    }
 
-	sa.sun_family = AF_UNIX;
-	sstrncpy(sa.sun_path, serv->pathname, sizeof (sa.sun_path));
+    sa.sun_family = AF_UNIX;
+    sstrncpy(sa.sun_path, serv->pathname, sizeof (sa.sun_path));
 
-	DEBUG (PLUGIN_NAME " plugin: socket path = %s", sa.sun_path);
+    if (serv->devel_mode) {
+        INFO(PLUGIN_NAME " plugin: socket path = %s", sa.sun_path);
+    }
 
-	if (serv->delete_socket) {
-        server_delete_socket(serv);
-	}
+    server_delete_socket(serv);
 
-	err = bind (serv->fd, (struct sockaddr *) &sa, sizeof (sa));
-	if (err) {
+    err = bind(serv->fd, (struct sockaddr *) &sa, sizeof (sa));
+    if (err) {
         return server_abort(serv, "bind failed");
-	}
+    }
 
-	err = chmod (sa.sun_path, serv->perms);
-	if (err) {
+    err = chmod(sa.sun_path, serv->perms);
+    if (err) {
         return server_abort(serv, "chmod failed");
-	}
+    }
 
-	err = listen (serv->fd, 8);
-	if (err) {
+    err = listen(serv->fd, 8);
+    if (err) {
         return server_abort(serv, "listen failed");
-	}
+    }
 
     /* this may fail, and it is OK. */
     server_set_socket_group(serv);
@@ -443,8 +444,10 @@ static int client_free(void *payload, void *data)
 {
     client_t *cli = payload;
     if (cli->done) {
-        DEBUG(PLUGIN_NAME
-              " plugin: client=%d was done, removing", cli->fd);
+        if (cli->serv->devel_mode) {
+            INFO(PLUGIN_NAME
+                  " plugin: client=%d was done, removing", cli->fd);
+        }
         return 0;
     }
     return 1;
@@ -453,22 +456,26 @@ static int client_free(void *payload, void *data)
 static void *server_listener_body(void *arg)
 {
     server_t *serv = arg;
-	while (serv->looping) {
-		DEBUG (PLUGIN_NAME " plugin: accepting clients..");
-		int fd = accept(serv->fd, NULL, NULL);
-		if (fd < 0) {
-			if (errno == EINTR) {
-				continue;
+    while (serv->looping) {
+        if (serv->devel_mode) {
+            INFO(PLUGIN_NAME " plugin: accepting clients...");
+        }
+        int fd = accept(serv->fd, NULL, NULL);
+        if (fd < 0) {
+            if (errno == EINTR) {
+                continue;
             }
             server_abort(serv, "accept failed");
-			pthread_exit(NULL);
-		}
+            pthread_exit(NULL);
+        }
 
-		DEBUG(PLUGIN_NAME " plugin: handling client=%d", fd);
+        if (serv->devel_mode) {
+            INFO(PLUGIN_NAME " plugin: handling client=%d", fd);
+        }
 
         FILE *fout = fdopen(fd, "w");
         if (!fout) {
-            WARNING(PLUGIN_NAME 
+            WARNING(PLUGIN_NAME
                     " plugin: client=%d fopen() failed, skipped",
                     fd);
             continue;
@@ -476,6 +483,7 @@ static void *server_listener_body(void *arg)
 
         client_t cli = {
             .fd = fd,
+            .serv = serv,
             .fout = fout,
             .done = 0,
         };
@@ -483,18 +491,21 @@ static void *server_listener_body(void *arg)
         if (!err) {
             INFO(PLUGIN_NAME " plugin: client=%d registered", cli.fd);
         } else {
-            WARNING(PLUGIN_NAME 
+            WARNING(PLUGIN_NAME
                     " plugin: client=%d register failed, error=%d",
                     cli.fd, err);
         }
 
         // janitorial duties
         queue_free(&serv->clients, client_free, NULL);
-	}
+    }
 
+    if (serv->devel_mode) {
+        INFO(PLUGIN_NAME " plugin: closing sockets...");
+    }
     server_close_socket(serv);
 
-	return NULL;
+    return NULL;
 }
 
 static int server_dispatch(void *payload, void *data)
@@ -513,7 +524,9 @@ static int server_dispatch(void *payload, void *data)
         fclose(cli->fout);
         cli->done = 1;
     } else {
-        DEBUG(PLUGIN_NAME " plugin: sent to client=%d", cli->fd);
+        if (cli->serv->devel_mode) {
+            INFO(PLUGIN_NAME " plugin: sent to client=%d", cli->fd);
+        }
     }
     return 0;
 }
@@ -521,9 +534,12 @@ static int server_dispatch(void *payload, void *data)
 static void *server_dispatcher_body(void *arg)
 {
     server_t *serv = arg;
-	while (serv->looping) {
+    while (serv->looping) {
         char text[MESSAGE_MAX_TEXT];
 
+        if (serv->devel_mode) {
+            INFO(PLUGIN_NAME " plugin: waiting for messages to dispatch");
+        }
         int err = queue_pop_head(&serv->messages, text, sizeof(text));
         if (err) {
             WARNING(PLUGIN_NAME " plugin: message fetch failed error=%d",
@@ -531,27 +547,35 @@ static void *server_dispatcher_body(void *arg)
             continue;
         }
 
-        err = queue_foreach(&serv->clients, server_dispatch, text);
+        if (text[0] != '\0') {
+            err = queue_foreach(&serv->clients, server_dispatch, text);
+        }
     }
 
+    if (serv->devel_mode) {
+        INFO(PLUGIN_NAME " plugin: dispatching done");
+    }
     return NULL;
 }
 
 static int server_stop_threads(server_t *serv)
 {
-	serv->looping = 0;
+    serv->looping = 0;
 
-	if (serv->listener != (pthread_t) 0) {
+    if (serv->listener != (pthread_t) 0) {
         pthread_kill(serv->listener, SIGTERM);
-		pthread_join(serv->listener, NULL);
-		serv->listener = (pthread_t) 0;
-	}
-	if (serv->dispatcher != (pthread_t) 0) {
-        pthread_kill(serv->listener, SIGTERM);
-		pthread_join(serv->dispatcher, NULL);
-		serv->dispatcher = (pthread_t) 0;
-	}
-	return 0;
+        pthread_join(serv->listener, NULL);
+        serv->listener = (pthread_t) 0;
+    }
+
+    char EOT[16] = { '\0' };
+    queue_push_tail(&serv->messages, EOT, strlen(EOT)+1);
+    if (serv->dispatcher != (pthread_t) 0) {
+        pthread_kill(serv->dispatcher, SIGTERM);
+        pthread_join(serv->dispatcher, NULL);
+        serv->dispatcher = (pthread_t) 0;
+    }
+    return 0;
 }
 
 static int strequals(const char *sa, const char *sb)
@@ -560,14 +584,14 @@ static int strequals(const char *sa, const char *sb)
 }
 
 #define SETSTRING(ATTR, VAL, DEF) do { \
-	char *new_value = strdup((VAL)); \
-	if (new_value == NULL) { \
-		return 1; \
+    char *new_value = strdup((VAL)); \
+    if (new_value == NULL) { \
+        return 1; \
     } \
     if ((DEF) == NULL || (ATTR) != (DEF)) { \
-		sfree((ATTR)); \
+        sfree((ATTR)); \
     } \
-	(ATTR) = new_value; \
+    (ATTR) = new_value; \
 } while (0)
 
 
@@ -576,14 +600,14 @@ static int mon_config(const char *key, const char *val)
     server_t *serv = &default_server;
     server_init(serv);
 
-	if (strequals(key, "SocketFile")) {
+    if (strequals(key, "SocketFile")) {
         SETSTRING(serv->pathname, val, DEFAULT_SOCKET_PATH);
-	} else if (strequals(key, "SocketGroup")) {
-        SETSTRING(serv->groupname, val, NULL);
-	} else if (strequals(key, "SocketPerms")) {
-		serv->perms = (int) strtol (val, NULL, 8);
-	} else if (strequals(key, "DeleteSocket")) {
-        serv->delete_socket = IS_TRUE((val));
+    } else if (strequals(key, "SocketGroup")) {
+        SETSTRING(serv->groupname, val, DEFAULT_SOCKET_GROUP);
+    } else if (strequals(key, "SocketPerms")) {
+        serv->perms = (int) strtol (val, NULL, 8);
+    } else if (strequals(key, "DevelMode")) {
+        serv->devel_mode = IS_TRUE((val));
     } else if (strequals(key, "OutputFormat")) {
         if (strequals(val, "minimal")) {
             serv->output_format = OUTPUT_FORMAT_MINIMAL;
@@ -594,10 +618,10 @@ static int mon_config(const char *key, const char *val)
         } else {
             return 1;
         }
-	} else {
-		return -1;
-	}
-	return 0;
+    } else {
+        return -1;
+    }
+    return 0;
 }
 
 static int mon_init(void)
@@ -613,12 +637,12 @@ static int mon_init(void)
 
     err = server_open_socket(serv);
     if (err) {
-        WARNING(PLUGIN_NAME "plugin: open socket failed error=%d", err); 
+        WARNING(PLUGIN_NAME " plugin: open socket failed error=%d", err);
         return err;
     }
     err = server_start_threads(serv);
     if (err) {
-        WARNING(PLUGIN_NAME " plugin: open socket failed error=%d", err); 
+        WARNING(PLUGIN_NAME " plugin: open socket failed error=%d", err);
         return err;
     }
 
@@ -631,10 +655,10 @@ static int mon_shutdown(void)
 {
     server_t *serv = &default_server; /* shortcut */
     int err = server_stop_threads(serv);
-	plugin_unregister_init(PLUGIN_NAME);
-	plugin_unregister_shutdown(PLUGIN_NAME);
+    plugin_unregister_init(PLUGIN_NAME);
+    plugin_unregister_shutdown(PLUGIN_NAME);
     plugin_unregister_notification(PLUGIN_NAME);
-	return 0;
+    return 0;
 }
 
 static int mon_notify(const notification_t *n, user_data_t UNUSED *user_data)
@@ -642,17 +666,17 @@ static int mon_notify(const notification_t *n, user_data_t UNUSED *user_data)
     server_t *serv = &default_server; /* shortcut */
 
     char text[1024] = ""; // TODO
-	char timestamp_str[64] = { '\0' };
+    char timestamp_str[64] = { '\0' };
 
     if (serv->output_format == OUTPUT_FORMAT_TERSE ||
        serv->output_format == OUTPUT_FORMAT_FULL) {
         cdtime_t ts = (n->time != 0) ? n->time : cdtime();
-    	struct tm timestamp_tm;
-	    time_t tt = CDTIME_T_TO_TIME_T(ts);
-    	localtime_r(&tt, &timestamp_tm);
-	    strftime(timestamp_str, sizeof (timestamp_str),
+        struct tm timestamp_tm;
+        time_t tt = CDTIME_T_TO_TIME_T(ts);
+        localtime_r(&tt, &timestamp_tm);
+        strftime(timestamp_str, sizeof (timestamp_str),
                  "%Y-%m-%d %H:%M:%S",
-		    	 &timestamp_tm);
+                 &timestamp_tm);
     }
 
     if (serv->output_format == OUTPUT_FORMAT_MINIMAL) {
@@ -676,18 +700,18 @@ static int mon_notify(const notification_t *n, user_data_t UNUSED *user_data)
                   n->message);
     }
 
-    queue_push_tail(&serv->messages, text, strlen(text));
+    queue_push_tail(&serv->messages, text, strlen(text)+1);
 
-	return 0;
+    return 0;
 }
 
 
 void module_register(void)
 {
-	plugin_register_config(PLUGIN_NAME, mon_config,
-			               config_keys, config_keys_num);
-	plugin_register_init(PLUGIN_NAME, mon_init);
-	plugin_register_shutdown(PLUGIN_NAME, mon_shutdown);
+    plugin_register_config(PLUGIN_NAME, mon_config,
+                           config_keys, config_keys_num);
+    plugin_register_init(PLUGIN_NAME, mon_init);
+    plugin_register_shutdown(PLUGIN_NAME, mon_shutdown);
     plugin_register_notification(PLUGIN_NAME, mon_notify, NULL);
     return;
 }
