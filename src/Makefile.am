@@ -34,16 +34,12 @@ vmon_LDFLAGS = \
 
 vmon_SOURCES = \
 	sampler.c \
-	vminfo.c \
-	vminfo_parse.c \
-	vminfo_print.c \
 	vmon.c \
 	vmon_int.c \
 	$(NULL)
 
 noinst_HEADERS = \
 	sampler.h \
-	vminfo.h \
 	vmon.h \
 	vmon_int.h \
 	$(NULL)

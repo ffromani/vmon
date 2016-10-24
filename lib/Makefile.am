@@ -10,6 +10,10 @@ libvmon_a_SOURCES = \
 	executor.c \
 	ringbuffer.c \
 	scheduler.c \
+	threading.c \
+	vminfo.c \
+	vminfo_parse.c \
+	vminfo_print.c \
 	$(NULL)
 
 
@@ -39,5 +43,7 @@ noinst_HEADERS = \
 	executor.h \
 	ringbuffer.h \
 	scheduler.h \
+	threading.h \
+	vminfo.h \
 	vmonlib.h \
 	$(NULL)

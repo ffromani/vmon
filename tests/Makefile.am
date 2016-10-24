@@ -46,7 +46,6 @@ test_executor_LDFLAGS = \
 	$(NULL)
 test_executor_SOURCES = \
 	$(top_srcdir)/src/vmon_int.c \
-	threading.c \
 	test_executor.c \
 	stubs.c \
 	$(NULL)
@@ -80,7 +79,6 @@ test_sampler_request_SOURCES = \
 	$(NULL)
 
 noinst_HEADERS = \
-	threading.h \
 	test_int.h \
 	$(NULL)
 
