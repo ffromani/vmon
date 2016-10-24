@@ -137,6 +137,15 @@ static int
 virt2_shutdown (void)
 {
     virt2_context_t *ctx = &default_context;
+
+    if (ctx->state.conn != NULL)
+        virConnectClose (ctx->state.conn);
+    ctx->state.conn = NULL;
+
+    if (ctx->state.doms != NULL)
+        virt2_doms_free(ctx->state.doms);
+    ctx->state.doms = NULL;
+
     sfree(ctx->user_data);
     return 0;
 }
@@ -218,10 +227,18 @@ virt2_init (void)
         return -1;
     }
 
+    ctx->state.conn = virConnectOpenReadOnly (ctx->conf.connection_uri);
+    if (ctx->state.conn == NULL) {
+        ERROR (PLUGIN_NAME " plugin: Unable to connect: "
+               "virConnectOpenReadOnly (%s) failed.",
+               ctx->conf.connection_uri);
+        return -1;
+    }
+
     for (size_t i = 0; i < instances_num; i++)
     {
-        char str[255];  // TODO
-        ssnprintf (str, sizeof(str), "virt-%zu", i);
+        char name[DATA_MAX_NAME_LEN];  // TODO
+        ssnprintf (name, sizeof(name), "virt-%zu", i);
 
         virt2_user_data_t *user_data = &(ctx->user_data[i]);
 
@@ -234,9 +251,8 @@ virt2_init (void)
         ud->data = inst;
         ud->free_func = NULL; // TODO
 
-        // TODO: if fails?
-        // TODO: why explicit interval?
-        plugin_register_complex_read (NULL, str, virt2_read, ctx->conf.interval, ud);
+        // TODO: what if this fails?
+        plugin_register_complex_read (NULL, name, virt2_read, ctx->conf.interval, ud);
     }
 
     return 0;
@@ -265,9 +281,17 @@ static int
 virt2_read_samples (virt2_instance_t *inst)
 {
     virt2_doms_t *doms = NULL;
+
     pthread_mutex_lock (&inst->state->lock);
     doms = virt2_doms_clone (&inst->state->doms[inst->id]);
     pthread_mutex_unlock (&inst->state->lock);
+    /*
+     * virDomainListGetStats below can block. So we choose to copy our
+     * list of domains to make this call independent from the others
+     * and to minimize the disruption.
+     * instance#0 can change this asynchronously, so we cannot just
+     * use it through a reference, we need a full copy.
+     */
  
     virDomainStatsRecordPtr *records = NULL;
     int records_num = 0;
