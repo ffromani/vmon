@@ -3,6 +3,7 @@ PLUGIN_LDFLAGS = -module -avoid-version -export-symbols-regex '\<module_register
 
 lib_LTLIBRARIES = \
 	virt.la \
+	virt2.la \
 	monitor.la \
 	$(NULL)
 
@@ -27,6 +28,18 @@ virt_la_LIBADD = \
 	$(LIBXML2_LIBS) \
 	$(NULL)
 virt_la_LDFLAGS = \
+	$(PLUGIN_LDFLAGS) \
+	$(NULL)
+
+virt2_la_CFLAGS = \
+	$(LIBVIRT_CFLAGS) \
+	$(AM_CFLAGS) \
+	$(NULL)
+virt2_la_LIBADD = \
+	$(LIBVIRT_LIBS) \
+	$(AM_LDFLAGS) \
+	$(NULL)
+virt2_la_LDFLAGS = \
 	$(PLUGIN_LDFLAGS) \
 	$(NULL)
 

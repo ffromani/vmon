@@ -89,7 +89,7 @@ int strjoin (char *dst, size_t dst_len, char **fields, size_t fields_num, const 
 				(t == DS_TYPE_ABSOLUTE) ? "absolute" : \
 				"unknown"
 
-
+#define DOUBLE_TO_CDTIME_T(d) ((cdtime_t) ((d) * 1073741824.0))
 #define CDTIME_T_TO_TIME_T(t) ((time_t) (((t) + (1 << 29)) >> 30))
 
 typedef uint64_t cdtime_t;
@@ -192,6 +192,10 @@ int plugin_register_init (const char *name,
         int (*callback) (void));
 int plugin_register_read (const char *name,
 		int (*callback) (void));
+int plugin_register_complex_read (const char *group, const char *name,
+        int (*callback) (user_data_t *),
+		cdtime_t interval,
+		user_data_t const *user_data);
 int plugin_register_shutdown (const char *name,
         int (*callback) (void));
 int plugin_register_notification (const char *name,
