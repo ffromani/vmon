@@ -70,7 +70,7 @@ typedef struct virt2_state_s virt2_state_t;
 typedef struct virt2_instance_s virt2_instance_t;
 struct virt2_instance_s {
     virt2_state_t *state;
-    const virt2_config_t *config;
+    const virt2_config_t *conf;
     size_t id;
 };
 
@@ -87,8 +87,12 @@ struct virt2_doms_s {
 };
 
 
+typedef int (*virt2_domain_predicate_t)(void *ud, virDomainPtr dom);
+
 static virt2_doms_t *virt2_doms_alloc(size_t num);
-static virt2_doms_t *virt2_doms_clone(virt2_doms_t *doms);
+static virt2_doms_t *virt2_doms_copy(virt2_doms_t *doms,
+                                     virt2_domain_predicate_t pred,
+                                     void *ud);
 static void virt2_doms_free(virt2_doms_t *doms);
 
 
@@ -130,6 +134,7 @@ static virt2_context_t default_context = {
 static int virt2_refresh(virt2_instance_t *inst);
 static int virt2_read_samples(virt2_instance_t *inst);
 static int virt2_dispatch_samples(virt2_instance_t *inst, virDomainStatsRecordPtr *records, int records_num);
+static int virt2_domain_is_ready(void *ud, virDomainPtr dom);
 
 /* *** */
 
@@ -208,9 +213,18 @@ virt2_read (user_data_t *ud)
 {
     virt2_instance_t *inst = ud->data;
     if (inst->id == 0) {
+        /* 
+         * to avoid nasty syncronization issues,
+         * we just sneak in another instances which
+         * is in charge to update the partitions.
+         * This will always be instance#0, and
+         * will be safe to run, because it will not use
+         * any of the potantially blocking libvirt calls.
+         */
         return virt2_refresh (inst);
     }
 
+    /* here the real work is done */
     return virt2_read_samples (inst);
 }
 
@@ -244,7 +258,7 @@ virt2_init (void)
 
         virt2_instance_t *inst = &user_data->inst;
         inst->state = &ctx->state;
-        inst->config = &ctx->conf;
+        inst->conf = &ctx->conf;
         inst->id = i;
         
         user_data_t *ud = &user_data->ud;
@@ -283,7 +297,7 @@ virt2_read_samples (virt2_instance_t *inst)
     virt2_doms_t *doms = NULL;
 
     pthread_mutex_lock (&inst->state->lock);
-    doms = virt2_doms_clone (&inst->state->doms[inst->id]);
+    doms = virt2_doms_copy (&inst->state->doms[inst->id], virt2_domain_is_ready, inst);
     pthread_mutex_unlock (&inst->state->lock);
     /*
      * virDomainListGetStats below can block. So we choose to copy our
@@ -313,12 +327,37 @@ virt2_dispatch_samples (virt2_instance_t *inst, virDomainStatsRecordPtr *records
     return 0;
 }
 
+static int
+virt2_domain_is_ready(void *ud, virDomainPtr dom)
+{
+    virt2_instance_t *inst = ud;
+    if (!inst->conf->domain_check)
+        return 1;
+
+    virDomainControlInfo info;
+    int err = virDomainGetControlInfo (dom, &info, 0);
+    if (err)
+    {
+        // TODO: GetLastError()
+        ERROR (PLUGIN_NAME " plugin: virtDomainGetControlInfo() failed");
+        return 0;
+    }
+
+    if (info.state != VIR_DOMAIN_CONTROL_OK)
+    {
+        // TODO: ERROR
+        return 0;
+    }
+
+    return 1;
+}
+
 /* *** */
 
 static virt2_doms_t *
 virt2_doms_alloc (size_t num)
 {
-    virt2_doms_t *doms = calloc (1, sizeof(virt2_doms_t) + (num * sizeof(virDomainPtr)));
+    virt2_doms_t *doms = calloc (1, sizeof(virt2_doms_t) + ((1 + num) * sizeof(virDomainPtr)));
     if (doms)
     {
         doms->doms = (virDomainPtr *) (doms + 1);
@@ -328,11 +367,18 @@ virt2_doms_alloc (size_t num)
 }
 
 static virt2_doms_t *
-virt2_doms_clone(virt2_doms_t *doms)
+virt2_doms_copy(virt2_doms_t *doms, virt2_domain_predicate_t pred, void *ud)
 {
     virt2_doms_t *newdoms = virt2_doms_alloc (doms->num);
-    if (newdoms != NULL)
-        memcpy (newdoms->doms, doms->doms, sizeof(virDomainPtr) * doms->num);
+    if (newdoms != NULL) {
+        size_t j = 0;
+        for (size_t i = 0; i > doms->num; i++) {
+            if (!pred || pred(ud, doms->doms[i])) {
+                newdoms->doms[j] = doms->doms[i];
+                j++;
+            }
+        }
+    }
     return newdoms;
 }
 
