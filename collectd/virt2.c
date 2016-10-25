@@ -71,6 +71,7 @@ typedef struct virt2_instance_s virt2_instance_t;
 struct virt2_instance_s {
     virt2_state_t *state;
     const virt2_config_t *conf;
+    uint64_t generation;
     size_t id;
 };
 
@@ -101,7 +102,10 @@ struct virt2_state_s {
 
     virt2_doms_t *doms;
     void **partitions; // placeholder
+    uint64_t generation;
+    unsigned int waiters;
     pthread_mutex_t lock;
+    pthread_cond_t cond;
 
     int stats;
     int flags;
@@ -131,17 +135,30 @@ static virt2_context_t default_context = {
     },
 };
 
-static int virt2_refresh(virt2_instance_t *inst);
-static int virt2_read_samples(virt2_instance_t *inst);
-static int virt2_dispatch_samples(virt2_instance_t *inst, virDomainStatsRecordPtr *records, int records_num);
-static int virt2_domain_is_ready(void *ud, virDomainPtr dom);
+/* easier to mock for tests */
+static virt2_context_t *
+virt2_get_default_context ()
+{
+    return &default_context;
+}
+
+/* *** */
+
+static int virt2_get_optimal_instance_count (virt2_context_t *ctx);
+static int virt2_init_func (virt2_context_t *ctx, size_t i, const char *func_name, int (*func_body) (user_data_t *ud));
+
+static int virt2_refresh (user_data_t *ud);
+static int virt2_read (user_data_t *ud);
+
+static int virt2_dispatch_samples (virt2_instance_t *inst, virDomainStatsRecordPtr *records, int records_num);
+static int virt2_domain_is_ready (void *ud, virDomainPtr dom);
 
 /* *** */
 
 static int
 virt2_shutdown (void)
 {
-    virt2_context_t *ctx = &default_context;
+    virt2_context_t *ctx = virt2_get_default_context ();
 
     if (ctx->state.conn != NULL)
         virConnectClose (ctx->state.conn);
@@ -158,7 +175,8 @@ virt2_shutdown (void)
 static int
 virt2_config (const char *key, const char *value)
 {
-    virt2_config_t *cfg = &default_context.conf;
+    virt2_context_t *ctx = virt2_get_default_context ();
+    virt2_config_t *cfg = &ctx->conf;
 
     if (strcasecmp (key, "Connection") == 0)
     {
@@ -209,32 +227,13 @@ virt2_config (const char *key, const char *value)
 }
 
 static int
-virt2_read (user_data_t *ud)
-{
-    virt2_instance_t *inst = ud->data;
-    if (inst->id == 0) {
-        /* 
-         * to avoid nasty syncronization issues,
-         * we just sneak in another instances which
-         * is in charge to update the partitions.
-         * This will always be instance#0, and
-         * will be safe to run, because it will not use
-         * any of the potantially blocking libvirt calls.
-         */
-        return virt2_refresh (inst);
-    }
-
-    /* here the real work is done */
-    return virt2_read_samples (inst);
-}
-
-static int
 virt2_init (void)
 {
-    virt2_context_t *ctx = &default_context;
-    size_t instances_num = 1 + ctx->conf.instances;
+    virt2_context_t *ctx = virt2_get_default_context ();
+    // always +1 for the refresh instance
+    size_t instances_num = 1 + virt2_get_optimal_instance_count (ctx);
 
-    ctx->user_data = calloc(instances_num, sizeof(virt2_user_data_t));
+    ctx->user_data = calloc (instances_num, sizeof(virt2_user_data_t));
     if (ctx->user_data == NULL)
     {
         ERROR (PLUGIN_NAME " plugin: cannot allocate %zu instances", instances_num);
@@ -249,24 +248,12 @@ virt2_init (void)
         return -1;
     }
 
-    for (size_t i = 0; i < instances_num; i++)
+    // TODO: what if this fails?
+    virt2_init_func (ctx, 0, "refresh", virt2_refresh);
+    for (size_t i = 1; i < instances_num; i++)
     {
-        char name[DATA_MAX_NAME_LEN];  // TODO
-        ssnprintf (name, sizeof(name), "virt-%zu", i);
-
-        virt2_user_data_t *user_data = &(ctx->user_data[i]);
-
-        virt2_instance_t *inst = &user_data->inst;
-        inst->state = &ctx->state;
-        inst->conf = &ctx->conf;
-        inst->id = i;
-        
-        user_data_t *ud = &user_data->ud;
-        ud->data = inst;
-        ud->free_func = NULL; // TODO
-
         // TODO: what if this fails?
-        plugin_register_complex_read (NULL, name, virt2_read, ctx->conf.interval, ud);
+        virt2_init_func (ctx, i, "read", virt2_read);
     }
 
     return 0;
@@ -286,17 +273,67 @@ module_register (void)
 /* *** */
 
 static int
-virt2_refresh (virt2_instance_t *inst)
+virt2_get_optimal_instance_count (virt2_context_t *ctx)
 {
+    return ctx->conf.instances;
+}
+
+static int
+virt2_init_func (virt2_context_t *ctx, size_t i, const char *func_name, int (*func_body) (user_data_t *ud))
+{
+    char name[DATA_MAX_NAME_LEN];  // TODO
+    ssnprintf (name, sizeof(name), "virt-%zu-%s", i, func_name);
+
+    virt2_user_data_t *user_data = &(ctx->user_data[i]);
+
+    virt2_instance_t *inst = &user_data->inst;
+    inst->state = &ctx->state;
+    inst->conf = &ctx->conf;
+    inst->id = i;
+
+    user_data_t *ud = &user_data->ud;
+    ud->data = inst;
+    ud->free_func = NULL; // TODO
+
+    return plugin_register_complex_read (NULL, name, func_body, ctx->conf.interval, ud);
+}
+
+static int
+virt2_refresh (user_data_t *ud)
+{
+    virt2_instance_t *inst = ud->data;
+    if (inst->id != 0) {
+        // TODO
+    }
+
+    pthread_mutex_lock (&inst->state->lock);
+
+    if (inst->state->waiters > 0)
+        pthread_cond_broadcast (&inst->state->cond);
+
+    pthread_mutex_unlock (&inst->state->lock);
+
+
     return 0;
 }
 
 static int
-virt2_read_samples (virt2_instance_t *inst)
+virt2_read (user_data_t *ud)
 {
+    int rc = 0;
     virt2_doms_t *doms = NULL;
+    virt2_instance_t *inst = ud->data;
+    if (inst->id == 0) {
+        // TODO
+    }
 
     pthread_mutex_lock (&inst->state->lock);
+
+    inst->state->waiters++;
+    while (inst->generation <= inst->state->generation)
+        pthread_cond_wait (&inst->state->cond, &inst->state->lock);
+    inst->state->waiters--;
+
     doms = virt2_doms_copy (&inst->state->doms[inst->id], virt2_domain_is_ready, inst);
     pthread_mutex_unlock (&inst->state->lock);
     /*
@@ -306,7 +343,7 @@ virt2_read_samples (virt2_instance_t *inst)
      * instance#0 can change this asynchronously, so we cannot just
      * use it through a reference, we need a full copy.
      */
- 
+
     virDomainStatsRecordPtr *records = NULL;
     int records_num = 0;
     int	ret = virDomainListGetStats (doms->doms, inst->state->stats, &records, inst->state->flags);
@@ -318,6 +355,8 @@ virt2_read_samples (virt2_instance_t *inst)
 
     virDomainStatsRecordListFree (records);
     virt2_doms_free (doms);
+
+    inst->generation++;
     return ret;
 }
 

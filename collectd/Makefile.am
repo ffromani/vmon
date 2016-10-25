@@ -1,4 +1,5 @@
 
+PLUGIN_CFLAGS = -DPLUGIN_FUNC=static
 PLUGIN_LDFLAGS = -module -avoid-version -export-symbols-regex '\<module_register\>'
 
 lib_LTLIBRARIES = \
@@ -9,6 +10,7 @@ lib_LTLIBRARIES = \
 
 monitor_la_CFLAGS = \
 	$(AM_CFLAGS) \
+	$(PLUGIN_CFLAGS) \
 	$(NULL)
 monitor_la_LIBADD = \
 	$(AM_LDFLAGS) \
@@ -19,6 +21,7 @@ monitor_la_LDFLAGS = \
 
 virt_la_CFLAGS = \
 	$(AM_CFLAGS) \
+	$(PLUGIN_CFLAGS) \
 	$(LIBVIRT_CFLAGS) \
 	$(LIBXML2_CFLAGS) \
 	$(NULL)
@@ -34,6 +37,7 @@ virt_la_LDFLAGS = \
 virt2_la_CFLAGS = \
 	$(LIBVIRT_CFLAGS) \
 	$(AM_CFLAGS) \
+	$(PLUGIN_CFLAGS) \
 	$(NULL)
 virt2_la_LIBADD = \
 	$(LIBVIRT_LIBS) \
