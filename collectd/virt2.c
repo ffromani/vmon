@@ -31,6 +31,11 @@
 #include "collectd.h"
 
 #include <libvirt/libvirt.h>
+#include <libvirt/virterror.h>
+
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xpath.h>
 
 
 #define PLUGIN_NAME "virt2"
@@ -42,16 +47,22 @@
  *   RefreshInterval 60
  *   Instances 5
  *   DomainCheck true
- *   DomainAffinity true
  * </Plugin>
  */
+
+#define METADATA_VM_PARTITION_URI "http://ovirt.org/vm/partition/1.0"
+#define METADATA_VM_PARTITION_ELEMENT "partition"
+#define METADATA_VM_PARTITION_PREFIX "ovirt"
+
+enum {
+    PARTITION_TAG_MAX_LEN = 256,
+};
 
 static const char *config_keys[] = {
     "Connection",
     "RefreshInterval"
     "Instances",
     "DomainCheck",
-    "DomainAffinity",
     NULL
 };
 #define NR_CONFIG_KEYS ((sizeof config_keys / sizeof config_keys[0]) - 1)
@@ -62,7 +73,6 @@ struct virt2_config_s {
     size_t instances;
     cdtime_t interval; /* could be 0, and it's OK */
     int domain_check;
-    int domain_affinity;
 };
 
 typedef struct virt2_state_s virt2_state_t;
@@ -100,10 +110,13 @@ static void virt2_doms_free(virt2_doms_t *doms);
 struct virt2_state_s {
     virConnectPtr conn;
 
+    virt2_doms_t all;
     virt2_doms_t *doms;
     void **partitions; // placeholder
     uint64_t generation;
     unsigned int waiters;
+    int done;
+
     pthread_mutex_t lock;
     pthread_cond_t cond;
 
@@ -124,14 +137,28 @@ static virt2_context_t default_context = {
     .user_data = NULL,
     .state = {
         .conn = NULL,
+        .all = {
+            .doms = NULL,
+            .num = 0,
+        },
+        .doms = NULL,
         .partitions = NULL,
+        .generation = 0,
+        .waiters = 0,
+        .done = 0,
+        .lock = PTHREAD_MUTEX_INITIALIZER,
+        .cond = PTHREAD_COND_INITIALIZER,
+        /*
+         * Using 0 for @stats returns all stats groups supported by the given hypervisor.
+         * http://libvirt.org/html/libvirt-libvirt-domain.html#virConnectGetAllDomainStats
+         */
+        .stats = 0,
         .flags = 0,
     },
     .conf = {
         .connection_uri = "qemu:///system",
         .instances = 5,
         .domain_check = 1,
-        .domain_affinity = 1,
     },
 };
 
@@ -144,12 +171,15 @@ virt2_get_default_context ()
 
 /* *** */
 
+static const char *virt2_get_partition_tag(const char *xml);
+
 static int virt2_get_optimal_instance_count (virt2_context_t *ctx);
 static int virt2_init_func (virt2_context_t *ctx, size_t i, const char *func_name, int (*func_body) (user_data_t *ud));
 
 static int virt2_refresh (user_data_t *ud);
-static int virt2_read (user_data_t *ud);
+static int virt2_read_partition (user_data_t *ud);
 
+static int virt2_sample_domains (virt2_instance_t *inst, virt2_doms_t *doms);
 static int virt2_dispatch_samples (virt2_instance_t *inst, virDomainStatsRecordPtr *records, int records_num);
 static int virt2_domain_is_ready (void *ud, virDomainPtr dom);
 
@@ -159,6 +189,11 @@ static int
 virt2_shutdown (void)
 {
     virt2_context_t *ctx = virt2_get_default_context ();
+
+    pthread_mutex_lock (&ctx->state.lock);
+    ctx->state.done = 1;
+    pthread_cond_broadcast (&ctx->state.cond);
+    pthread_mutex_unlock (&ctx->state.lock);
 
     if (ctx->state.conn != NULL)
         virConnectClose (ctx->state.conn);
@@ -180,7 +215,7 @@ virt2_config (const char *key, const char *value)
 
     if (strcasecmp (key, "Connection") == 0)
     {
-        char *tmp = strdup (value);
+        char *tmp = sstrdup (value);
         if (tmp == NULL) {
             ERROR (PLUGIN_NAME " plugin: Connection strdup failed.");
             return 1;
@@ -216,11 +251,6 @@ virt2_config (const char *key, const char *value)
         cfg->domain_check = IS_TRUE (value);
         return 0;
     }
-    if (strcasecmp (key, "DomainAffinity") == 0)
-    {
-        cfg->domain_affinity = IS_TRUE (value);
-        return 0;
-    }
 
     /* Unrecognised option. */
     return -1;
@@ -231,7 +261,21 @@ virt2_init (void)
 {
     virt2_context_t *ctx = virt2_get_default_context ();
     // always +1 for the refresh instance
-    size_t instances_num = 1 + virt2_get_optimal_instance_count (ctx);
+    size_t instances_num = + virt2_get_optimal_instance_count (ctx);
+
+    ctx->state.generation = 0;
+    ctx->state.waiters = 0;
+    ctx->state.done = 0;
+    /*
+     * Using 0 for @stats returns all stats groups supported by the given hypervisor.
+     * http://libvirt.org/html/libvirt-libvirt-domain.html#virConnectGetAllDomainStats
+     */
+    ctx->state.stats = 0;
+    ctx->state.all.doms = NULL;
+    ctx->state.all.num = 0;
+
+    pthread_mutex_init(&ctx->state.lock, NULL);
+    pthread_cond_init(&ctx->state.cond, NULL);
 
     ctx->user_data = calloc (instances_num, sizeof(virt2_user_data_t));
     if (ctx->user_data == NULL)
@@ -253,9 +297,8 @@ virt2_init (void)
     for (size_t i = 1; i < instances_num; i++)
     {
         // TODO: what if this fails?
-        virt2_init_func (ctx, i, "read", virt2_read);
+        virt2_init_func (ctx, i, "read_partition", virt2_read_partition);
     }
-
     return 0;
 }
 
@@ -298,63 +341,147 @@ virt2_init_func (virt2_context_t *ctx, size_t i, const char *func_name, int (*fu
     return plugin_register_complex_read (NULL, name, func_body, ctx->conf.interval, ud);
 }
 
+static const char *
+virt2_get_partition_tag(const char *xml)
+{
+    const char *partition_tag = NULL;
+    xmlDocPtr xml_doc = NULL;
+    xmlXPathContextPtr xpath_ctx = NULL;
+    xmlXPathObjectPtr xpath_obj = NULL;
+
+    xml_doc = xmlReadDoc (xml, NULL, NULL, XML_PARSE_NONET);
+    if (xml_doc == NULL)
+    {
+        ERROR (PLUGIN_NAME " plugin: xmlReadDoc() failed");
+        goto done;
+    }
+
+    xpath_ctx = xmlXPathNewContext (xml_doc);
+
+    /* Block devices. */
+    char xpath_str[PARTITION_TAG_MAX_LEN] = { '\0' };
+    ssnprintf (xpath_str, sizeof(xpath_str), "/domain/metadata/%s:%s",
+               METADATA_VM_PARTITION_PREFIX, METADATA_VM_PARTITION_ELEMENT);
+    xpath_obj = xmlXPathEval(xpath_str, xpath_ctx);
+    if (xpath_obj == NULL)
+    {
+        ERROR (PLUGIN_NAME " plugin: xmlXPathEval(%s) failed", xpath_str);
+        goto done;
+    }
+
+    if (xpath_obj->type != XPATH_STRING)
+    {
+        ERROR (PLUGIN_NAME " plugin: xmlXPathEval() unexpected return type %d (wanted %d)",
+               xpath_obj->type, XPATH_STRING);
+        goto done;
+    }
+
+    partition_tag = sstrdup(xpath_obj->stringval);
+
+done:
+    if (xpath_obj)
+        xmlXPathFreeObject (xpath_obj);
+    if (xpath_ctx)
+        xmlXPathFreeContext (xpath_ctx);
+    if (xml_doc)
+        xmlFreeDoc (xml_doc);
+
+    return partition_tag;
+}
+
 static int
 virt2_refresh (user_data_t *ud)
 {
     virt2_instance_t *inst = ud->data;
     if (inst->id != 0) {
-        // TODO
+        ERROR (PLUGIN_NAME " plugin: virt2_refresh called from the wrong instance#%zu",
+               inst->id);
+        return -1;
     }
 
-    pthread_mutex_lock (&inst->state->lock);
+    // first clean up the previous round
+    for (size_t i = 0; i < inst->state->all.num; i++)
+        virDomainFree (inst->state->all.doms[i]);
+    sfree (inst->state->all.doms);
 
+    // now prepare the next round: get master reference
+    int ret = 0;
+    unsigned int flags = VIR_CONNECT_LIST_DOMAINS_RUNNING;
+    ret = virConnectListAllDomains (inst->state->conn, &inst->state->all.doms, flags);
+    if (ret < 0) {
+        ERROR (PLUGIN_NAME " plugin: virConnectListAllDomains failed: %s",
+               virGetLastErrorMessage());
+        return -1;
+    }
+    inst->state->all.num = ret;
+
+    // partition the domain set
+
+    // allocate the partitions to the instances
+
+    // ready to go!
+    pthread_mutex_lock (&inst->state->lock);
     if (inst->state->waiters > 0)
         pthread_cond_broadcast (&inst->state->cond);
-
     pthread_mutex_unlock (&inst->state->lock);
-
-
     return 0;
 }
 
 static int
-virt2_read (user_data_t *ud)
+virt2_sample_domains (virt2_instance_t *inst, virt2_doms_t *doms)
 {
-    int rc = 0;
-    virt2_doms_t *doms = NULL;
-    virt2_instance_t *inst = ud->data;
-    if (inst->id == 0) {
-        // TODO
-    }
-
-    pthread_mutex_lock (&inst->state->lock);
-
-    inst->state->waiters++;
-    while (inst->generation <= inst->state->generation)
-        pthread_cond_wait (&inst->state->cond, &inst->state->lock);
-    inst->state->waiters--;
-
-    doms = virt2_doms_copy (&inst->state->doms[inst->id], virt2_domain_is_ready, inst);
-    pthread_mutex_unlock (&inst->state->lock);
-    /*
-     * virDomainListGetStats below can block. So we choose to copy our
-     * list of domains to make this call independent from the others
-     * and to minimize the disruption.
-     * instance#0 can change this asynchronously, so we cannot just
-     * use it through a reference, we need a full copy.
-     */
-
     virDomainStatsRecordPtr *records = NULL;
     int records_num = 0;
-    int	ret = virDomainListGetStats (doms->doms, inst->state->stats, &records, inst->state->flags);
+    int	ret = 0;
+
+    ret = virDomainListGetStats (doms->doms, inst->state->stats, &records, inst->state->flags);
     if (ret == -1) {
         // TODO
     } else {
         ret = virt2_dispatch_samples (inst, records, records_num);
     }
-
     virDomainStatsRecordListFree (records);
-    virt2_doms_free (doms);
+
+    return ret;
+}
+
+static int
+virt2_read_partition (user_data_t *ud)
+{
+    int rc = 0;
+    virt2_doms_t *doms = NULL;
+    virt2_instance_t *inst = ud->data;
+    if (inst->id == 0) {
+        ERROR (PLUGIN_NAME " plugin: virt2_read_partition called from the wrong instance#%zu",
+               inst->id);
+        return -1;
+    }
+
+    pthread_mutex_lock (&inst->state->lock);
+
+    inst->state->waiters++;
+    while ((inst->generation <= inst->state->generation) && !inst->state->done)
+        pthread_cond_wait (&inst->state->cond, &inst->state->lock);
+    inst->state->waiters--;
+
+
+    /*
+     * getting libvirt domain stats can block. So we choose to copy our
+     * list of domains to make this call independent from the others
+     * and to minimize the disruption.
+     * instance#0 can change this asynchronously, so we cannot just
+     * use it through a reference, we need a full copy.
+     */
+    if (!inst->state->done)
+        doms = virt2_doms_copy (&inst->state->doms[inst->id], virt2_domain_is_ready, inst);
+    pthread_mutex_unlock (&inst->state->lock);
+
+    int ret = 0;
+    if (!inst->state->done)
+    {
+        ret = virt2_sample_domains (inst, doms);
+        virt2_doms_free (doms);
+    }
 
     inst->generation++;
     return ret;
@@ -373,18 +500,22 @@ virt2_domain_is_ready(void *ud, virDomainPtr dom)
     if (!inst->conf->domain_check)
         return 1;
 
+    char domainUUID[VIR_UUID_STRING_BUFLEN + 1] = { '\0' };
+    virDomainGetUUIDString (dom, domainUUID);
+
     virDomainControlInfo info;
     int err = virDomainGetControlInfo (dom, &info, 0);
     if (err)
     {
-        // TODO: GetLastError()
-        ERROR (PLUGIN_NAME " plugin: virtDomainGetControlInfo() failed");
+        ERROR (PLUGIN_NAME " plugin: virtDomainGetControlInfo(%s) failed: %s",
+               domainUUID, virGetLastErrorMessage());
         return 0;
     }
 
     if (info.state != VIR_DOMAIN_CONTROL_OK)
     {
-        // TODO: ERROR
+        DEBUG (PLUGIN_NAME " plugin: domain %s state %d expected %d: skipped",
+               domainUUID, info.state, VIR_DOMAIN_CONTROL_OK);
         return 0;
     }
 
@@ -411,7 +542,7 @@ virt2_doms_copy(virt2_doms_t *doms, virt2_domain_predicate_t pred, void *ud)
     virt2_doms_t *newdoms = virt2_doms_alloc (doms->num);
     if (newdoms != NULL) {
         size_t j = 0;
-        for (size_t i = 0; i > doms->num; i++) {
+        for (size_t i = 0; i < doms->num; i++) {
             if (!pred || pred(ud, doms->doms[i])) {
                 newdoms->doms[j] = doms->doms[i];
                 j++;

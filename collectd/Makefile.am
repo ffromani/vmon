@@ -35,13 +35,15 @@ virt_la_LDFLAGS = \
 	$(NULL)
 
 virt2_la_CFLAGS = \
-	$(LIBVIRT_CFLAGS) \
 	$(AM_CFLAGS) \
 	$(PLUGIN_CFLAGS) \
+	$(LIBVIRT_CFLAGS) \
+	$(LIBXML2_CFLAGS) \
 	$(NULL)
 virt2_la_LIBADD = \
-	$(LIBVIRT_LIBS) \
 	$(AM_LDFLAGS) \
+	$(LIBVIRT_LIBS) \
+	$(LIBXML2_LIBS) \
 	$(NULL)
 virt2_la_LDFLAGS = \
 	$(PLUGIN_LDFLAGS) \
