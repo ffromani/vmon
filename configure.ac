@@ -54,7 +54,6 @@ PKG_CHECK_MODULES(UUID, [uuid])
 
 AC_OUTPUT([Makefile
            vmon.spec
-           collectd/Makefile
            contrib/Makefile
            contrib/jsmn/Makefile
            lib/Makefile

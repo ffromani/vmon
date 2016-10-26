@@ -18,7 +18,7 @@
 # Refer to the README and COPYING files for full details of the license
 #
 
-SUBDIRS = collectd contrib lib src tests
+SUBDIRS = contrib lib src tests
 
 .PHONY: srpm rpm
 
